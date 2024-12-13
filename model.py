@@ -75,6 +75,15 @@ class RAGModel:
 
     def retrieve_documents(self, query, top_k=3):
         return retrieve_documents(self.index, query, top_k)
+    
+    def generate_response(self, query, top_k=3):
+        retrieved_docs = self.retrieve_documents(query, top_k)
+        context = "\n".join(retrieved_docs)
+        prompt = f"Context:\n{context}\n\nQuery: {query}\nAnswer: "
+
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        outputs = self.model.generate(inputs.input_ids, max_length=100, temperature=0.7)
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 if __name__ == "__main__":
     rag_model = RAGModel()
@@ -82,7 +91,7 @@ if __name__ == "__main__":
     results = rag_model.retrieve_documents("capital of Spain")
     print("Retrieved Documents:", results)
 
-    prompt = "The capital of Italy is"
+    prompt = "What is the capital of Spain?"
     tokenizer, model, device = rag_model.tokenizer, rag_model.model, rag_model.device
     inputs = tokenizer(
         prompt,
