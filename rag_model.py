@@ -1,68 +1,87 @@
 import os
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from whoosh.index import create_in
-from whoosh.fields import Schema, TEXT
-from whoosh.qparser import QueryParser
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, StoppingCriteriaList, StoppingCriteria
+from sentence_transformers import SentenceTransformer, util
 import tempfile
 import argparse
 
-def load_quantized_model(model_name="gpt2"):
+class DenseRetriever:
+    def __init__(self, model_name="all-MiniLM-L6-v2"):
+        print(f"Loading dense retriever model: {model_name}")
+        self.model = SentenceTransformer(model_name)
+        self.corpus = []
+        self.corpus_embeddings = None
+
+    def add_documents(self, documents):
+        self.corpus.extend(documents)
+        self.corpus_embeddings = self.model.encode(self.corpus, convert_to_tensor=True)
+
+    def retrieve(self, query, top_k=3):
+        if self.corpus_embeddings is None:  # Explicitly check if embeddings are None
+            raise ValueError("Corpus is empty. Add documents before retrieval.")
+        query_embedding = self.model.encode(query, convert_to_tensor=True)
+        scores = util.pytorch_cos_sim(query_embedding, self.corpus_embeddings)[0]
+        top_results = torch.topk(scores, k=top_k)
+        return [self.corpus[idx] for idx in top_results.indices]
+
+def load_quantized_model(model_name="google/flan-t5-small"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    print(f"Loading model: {model_name}")
+    print(f"Loading language model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     model.to(device)
 
     return tokenizer, model, device
 
-def setup_index():
-    schema = Schema(content=TEXT(stored=True))
-    index_dir = tempfile.mkdtemp()
-    index = create_in(index_dir, schema)
-    return index
-
-def add_documents_to_index(index, documents):
-    writer = index.writer()
-    for doc in documents:
-        writer.add_document(content=doc)
-    writer.commit()
-
-def retrieve_documents(index, query, top_k=3):
-    searcher = index.searcher()
-    query_parser = QueryParser("content", schema=index.schema)
-    parsed_query = query_parser.parse(query)
-    results = searcher.search(parsed_query, limit=top_k)
-    return [result["content"] for result in results]
-
 class RAGModel:
-    def __init__(self, model_name="gpt2"):
+    def __init__(self, model_name="google/flan-t5-small", retriever_model="all-MiniLM-L6-v2"):
         self.tokenizer, self.model, self.device = load_quantized_model(model_name)
-        self.index = setup_index()
+        self.retriever = DenseRetriever(retriever_model)
 
     def add_to_corpus(self, documents):
-        add_documents_to_index(self.index, documents)
+        self.retriever.add_documents(documents)
 
     def retrieve_documents(self, query, top_k=3):
-        return retrieve_documents(self.index, query, top_k)
-    
+        return self.retriever.retrieve(query, top_k)
+
     def generate_response(self, query, top_k=3):
         retrieved_docs = self.retrieve_documents(query, top_k)
         context = "\n".join(retrieved_docs)
-        prompt = f"Context:\n{context}\n\nQuery: {query}\nAnswer: "
+        prompt = f"""
+        You are a helpful assistant providing factual answers based on the given context.
+
+        Context:
+        {context}
+
+        Example Format:
+        Answer: The capital of France is Paris. Paris is the largest city in France and its political, economic, and cultural center.
+        Answer: The capital of Germany is Berlin. Berlin is known for its history, culture, and role in European politics.
+
+        Please answer the following question based on the context and example format above.
+        Question: {query}
+
+        Answer:
+        """
 
         inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True).to(self.device)
+
+        # class StopAtAnswer(StoppingCriteria):
+        #     def __init__(self, stop_token):
+        #         super().__init__()
+        #         self.stop_token = stop_token
+
+        #     def __call__(self, input_ids, scores, **kwargs):
+        #         decoded_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        #         return self.stop_token in decoded_text
+
         outputs = self.model.generate(
             inputs.input_ids,
             attention_mask=inputs.attention_mask,
-            max_length=100,
-            temperature=0.7,
-            do_sample=True,
+            max_new_tokens=50,
+            num_beams=5,  # Beam search for deterministic answers
+            early_stopping=True,
             pad_token_id=self.tokenizer.pad_token_id
         )
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -93,6 +112,6 @@ if __name__ == "__main__":
 # #!/bin/bash
 # python3 -m venv rag_env
 # source rag_env/bin/activate
-# pip install transformers whoosh
+# pip install transformers sentence-transformers torch
 # echo "Setup complete. Run the program with: python <script_name>.py --help"
 # ```
