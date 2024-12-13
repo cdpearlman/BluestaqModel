@@ -1,16 +1,23 @@
-# import torch
-# from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from whoosh.index import create_in
+from whoosh.fields import Schema, TEXT
+from whoosh.qparser import QueryParser
+import tempfile
 
-# def load_quantized_model(model_name="gpt2"):
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     print(f"Using device: {device}")
+def load_quantized_model(model_name="gpt2"):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-#     print(f"Loading model: {model_name}")
-#     tokenizer = AutoTokenizer.from_pretrained(model_name)
-#     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
-#     model.to(device)
+    print(f"Loading model: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-#     return tokenizer, model, device
+    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
+    model.to(device)
+
+    return tokenizer, model, device
 
 # if __name__ == "__main__":
 #     tokenizer, model, device = load_quantized_model()
@@ -32,10 +39,6 @@
 #     )
 
 #     print(tokenizer.decode(outputs[0], skip_special_tokens=True))
-from whoosh.index import create_in
-from whoosh.fields import Schema, TEXT
-from whoosh.qparser import QueryParser
-import tempfile
 
 def setup_index():
     schema = Schema(content=TEXT(stored=True))
@@ -55,10 +58,48 @@ def retrieve_documents(index, query, top_k=3):
     parsed_query = query_parser.parse(query)
     results = searcher.search(parsed_query, limit=top_k)
     return [result["content"] for result in results]
+# if __name__ == "__main__":
+#     index = setup_index()
+#     add_documents_to_index(index, ["Paris is the capital of France.", "Berlin is the capital of Germany."])
+#     query = "capital of France"
+#     results = retrieve_documents(index, query)
+#     print("Retrieved Documents:", results)
+
+class RAGModel:
+    def __init__(self, model_name="gpt2"):
+        self.tokenizer, self.model, self.device = load_quantized_model(model_name)
+        self.index = setup_index()
+
+    def add_to_corpus(self, documents):
+        add_documents_to_index(self.index, documents)
+
+    def retrieve_documents(self, query, top_k=3):
+        return retrieve_documents(self.index, query, top_k)
 
 if __name__ == "__main__":
-    index = setup_index()
-    add_documents_to_index(index, ["Paris is the capital of France.", "Berlin is the capital of Germany."])
-    query = "capital of France"
-    results = retrieve_documents(index, query)
+    rag_model = RAGModel()
+    rag_model.add_to_corpus(["Rome is the capital of Italy.", "Madrid is the capital of Spain."])
+    results = rag_model.retrieve_documents("capital of Spain")
     print("Retrieved Documents:", results)
+
+    prompt = "The capital of Italy is"
+    tokenizer, model, device = rag_model.tokenizer, rag_model.model, rag_model.device
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        padding=True,
+        truncation=True
+    ).to(device)
+
+    outputs = model.generate(
+        inputs.input_ids,
+        attention_mask=inputs.attention_mask,
+        max_length=20,
+        temperature=0.7,
+        do_sample=True,
+        pad_token_id=tokenizer.pad_token_id  # Use explicitly set pad token
+    )
+
+    print("Generated Text:", tokenizer.decode(outputs[0], skip_special_tokens=True))
+
+
