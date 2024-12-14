@@ -5,6 +5,8 @@ from whoosh.fields import Schema, TEXT
 from whoosh.qparser import QueryParser
 import tempfile
 
+# THIS FILE USED FOR TESTING ONLY, NOT FOR PRODUCTION
+
 def load_quantized_model(model_name="gpt2"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")

@@ -1,29 +1,32 @@
-import os
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, StoppingCriteriaList, StoppingCriteria
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from sentence_transformers import SentenceTransformer, util
-import tempfile
 import argparse
 
+# used a dense retriever model, takes slightly longer but will have much better results with a large corpus
 class DenseRetriever:
+    # initialize model
     def __init__(self, model_name="all-MiniLM-L6-v2"):
         print(f"Loading dense retriever model: {model_name}")
         self.model = SentenceTransformer(model_name)
         self.corpus = []
         self.corpus_embeddings = None
 
+    # add documents to corpus
     def add_documents(self, documents):
         self.corpus.extend(documents)
         self.corpus_embeddings = self.model.encode(self.corpus, convert_to_tensor=True)
 
+    # retrieve documents, using the top_k most similar documents provided in the command line args
     def retrieve(self, query, top_k=3):
-        if self.corpus_embeddings is None:  # Explicitly check if embeddings are None
+        if self.corpus_embeddings is None:  # explicitly check if embeddings are None
             raise ValueError("Corpus is empty. Add documents before retrieval.")
         query_embedding = self.model.encode(query, convert_to_tensor=True)
         scores = util.pytorch_cos_sim(query_embedding, self.corpus_embeddings)[0]
         top_results = torch.topk(scores, k=top_k)
         return [self.corpus[idx] for idx in top_results.indices]
 
+# load pre-trained model (flan-t5-small)
 def load_quantized_model(model_name="google/flan-t5-small"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -35,6 +38,7 @@ def load_quantized_model(model_name="google/flan-t5-small"):
 
     return tokenizer, model, device
 
+# RAG model, compiles relevant information from dense retriever and language model
 class RAGModel:
     def __init__(self, model_name="google/flan-t5-small", retriever_model="all-MiniLM-L6-v2"):
         self.tokenizer, self.model, self.device = load_quantized_model(model_name)
@@ -46,6 +50,7 @@ class RAGModel:
     def retrieve_documents(self, query, top_k=3):
         return self.retriever.retrieve(query, top_k)
 
+    # generate response, prompt asks for a concise answer and gives possible examples
     def generate_response(self, query, top_k=3):
         retrieved_docs = self.retrieve_documents(query, top_k)
         context = "\n".join(retrieved_docs)
@@ -87,6 +92,7 @@ class RAGModel:
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def main():
+    # parse through command line arguments and run the necessary functions
     parser = argparse.ArgumentParser(description="RAG Model CLI")
     parser.add_argument("--query", type=str, help="Query to ask the RAG model.")
     parser.add_argument("--corpus", type=str, nargs="*", help="Corpus documents to add.")
@@ -105,13 +111,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Shell script for setup (Linux):
-# Save the following script as setup.sh for dependency installation
-# ```bash
-# #!/bin/bash
-# python3 -m venv rag_env
-# source rag_env/bin/activate
-# pip install transformers sentence-transformers torch
-# echo "Setup complete. Run the program with: python <script_name>.py --help"
-# ```
