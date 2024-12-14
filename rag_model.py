@@ -17,6 +17,7 @@ class DenseRetriever:
         self.corpus.extend(documents)
         self.corpus_embeddings = self.model.encode(self.corpus, convert_to_tensor=True)
 
+
     # retrieve documents, using the top_k most similar documents provided in the command line args
     def retrieve(self, query, top_k=3):
         if self.corpus_embeddings is None:  # explicitly check if embeddings are None
@@ -37,6 +38,19 @@ def load_quantized_model(model_name="google/flan-t5-small"):
     model.to(device)
 
     return tokenizer, model, device
+
+# load documents from file to be added to corpus
+def add_documents_from_file(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            documents = f.readlines()  # Each line is treated as a separate document
+        return [doc.strip() for doc in documents if doc.strip()]  # Remove empty lines
+    except FileNotFoundError:
+        print(f"Error: File '{file_path}' not found.")
+        return []
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        return []
 
 # RAG model, compiles relevant information from dense retriever and language model
 class RAGModel:
@@ -92,22 +106,31 @@ class RAGModel:
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def main():
-    # parse through command line arguments and run the necessary functions
     parser = argparse.ArgumentParser(description="RAG Model CLI")
     parser.add_argument("--query", type=str, help="Query to ask the RAG model.")
     parser.add_argument("--corpus", type=str, nargs="*", help="Corpus documents to add.")
+    parser.add_argument("--file", type=str, help="Path to a text file containing documents to add to the corpus.")
     parser.add_argument("--top_k", type=int, default=3, help="Number of documents to retrieve.")
 
     args = parser.parse_args()
 
     rag_model = RAGModel()
 
+    # Add documents from the corpus argument
     if args.corpus:
         rag_model.add_to_corpus(args.corpus)
 
+    # Add documents from the file argument
+    if args.file:
+        file_documents = add_documents_from_file(args.file)
+        if file_documents:
+            rag_model.add_to_corpus(file_documents)
+
+    # Handle the query
     if args.query:
         response = rag_model.generate_response(args.query, top_k=args.top_k)
         print("\nGenerated Response:\n", response)
+
 
 if __name__ == "__main__":
     main()
