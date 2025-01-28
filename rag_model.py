@@ -28,7 +28,7 @@ class DenseRetriever:
         return [self.corpus[idx] for idx in top_results.indices]
 
 # load pre-trained model (flan-t5-small)
-def load_quantized_model(model_name="google/flan-t5-small"):
+def load_model(model_name="google/flan-t5-small"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -55,7 +55,7 @@ def add_documents_from_file(file_path):
 # RAG model, compiles relevant information from dense retriever and language model
 class RAGModel:
     def __init__(self, model_name="google/flan-t5-small", retriever_model="all-MiniLM-L6-v2"):
-        self.tokenizer, self.model, self.device = load_quantized_model(model_name)
+        self.tokenizer, self.model, self.device = load_model(model_name)
         self.retriever = DenseRetriever(retriever_model)
 
     def add_to_corpus(self, documents):
@@ -76,7 +76,6 @@ class RAGModel:
 
         Example Format:
         Answer: The capital of France is Paris. Paris is the largest city in France and its political, economic, and cultural center.
-        Answer: The capital of Germany is Berlin. Berlin is known for its history, culture, and role in European politics.
 
         Please answer the following question based on the context and example format above.
         Question: {query}
